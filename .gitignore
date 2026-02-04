@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual env / tooling
+venv/
+.venv/
+env/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Project data & outputs (not for VCS)
+data/
+out/
+cache/
+work/
+
+# GIS / data artifacts
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.gpkg-journal
+*.csv
+*.tsv
+*.geojson
+*.jsonl
+*.log
+
+# Docs binaries
+docs/*.docx
+
