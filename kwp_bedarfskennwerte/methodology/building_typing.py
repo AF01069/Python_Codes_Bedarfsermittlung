@@ -657,7 +657,10 @@ def _plot_categorical_distribution(series: pd.Series, title: str, out_png: Path)
     plt.title(title)
     plt.ylabel("Anzahl Gebäude")
     plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+        plt.tight_layout()
     plt.savefig(out_png)
     plt.close()
 
@@ -1143,6 +1146,11 @@ def run_building_typing(ap1_gpkg: PathLike,
     }
 
     gdf_out = gdf_out.rename(columns=rename_map)
+
+    # Jahresfelder als Integer sichern (GPKG-Datentypen)
+    for col in ("DIVIS_year", "Final_Baujahr_Mitte"):
+        if col in gdf_out.columns:
+            gdf_out[col] = pd.to_numeric(gdf_out[col], errors="coerce").astype("Int64")
 
     # sicherstellen, dass die Geometriespalte korrekt gesetzt bleibt
     gdf_out.set_geometry(geom_col, inplace=True)

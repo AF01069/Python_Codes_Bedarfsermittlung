@@ -50,7 +50,7 @@ DATA_DIR = rel_data_dir()
 LOD2_DIR = rel_geometrie_lod2_dir()
 
 # >>> HIER pro Stadt anpassen: LoD2-Basename (ohne Endung) – nur für relative Pfade
-LOD2_BASENAME = os.environ.get("KWP_LOD2_BASENAME", "lod2_33496_5676_2_sn")
+LOD2_BASENAME = os.environ.get("KWP_LOD2_BASENAME", "lod2_33498_5666_2_sn")
 
 # Optional: absoluter Pfad (z.B. aus deiner Windows-Umgebung). Wenn gesetzt und existent, hat er Vorrang.
 TEST_LOD2_PATH = Path(
@@ -229,7 +229,7 @@ def _build_jobs() -> List[List[str]]:
             str(maxx),
             str(maxy),
             "--overpass-url",
-            DEFAULT_OVERPASS_URL,
+            os.environ.get("KWP_OVERPASS_URLS", DEFAULT_OVERPASS_URL),
             "--basemap-mvt-template",
             DEFAULT_BASEMAP_MVT,
             "--out-dir",
@@ -257,7 +257,7 @@ def _build_jobs() -> List[List[str]]:
             str(maxx),
             str(maxy),
             "--overpass-url",
-            DEFAULT_OVERPASS_URL,
+            os.environ.get("KWP_OVERPASS_URLS", DEFAULT_OVERPASS_URL),
             "--basemap-mvt-template",
             DEFAULT_BASEMAP_MVT,
             "--out-dir",

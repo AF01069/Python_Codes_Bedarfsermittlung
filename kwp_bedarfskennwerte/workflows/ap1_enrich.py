@@ -19,6 +19,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from urllib.parse import urlencode
+from shapely.geometry import box as shp_box
 
 from ..data_catalog.sources import DivisWmsSource
 from ..config.runtime import PipelineContext
@@ -85,6 +86,36 @@ def _try_load_cached_layer(
         return None
 
 
+def _zensus_output_looks_valid(
+    gdf: gpd.GeoDataFrame,
+    *,
+    expect_divis: bool,
+    expect_bmap: bool = False,
+) -> bool:
+    """Check whether a cached Zensus output looks compatible with the current run."""
+    z_cols = [c for c in gdf.columns if c.startswith("ZENSUS_")]
+    if not z_cols:
+        return False
+    if not gdf[z_cols].notna().any().any():
+        return False
+    if expect_divis and not any(c.startswith("DIVIS_") for c in gdf.columns):
+        return False
+    if expect_bmap and not _has_bmap_data(gdf):
+        return False
+    for col in ("DIVIS_Baujahr_Extrakt", "OBAT_Baujahr_Mitte", "Final_Baujahr_Mitte"):
+        if col in gdf.columns and gdf[col].dtype == object:
+            return False
+    return True
+
+
+def _has_bmap_data(gdf: gpd.GeoDataFrame) -> bool:
+    """Check whether any BMAP_* columns carry non-null values."""
+    bmap_cols = [c for c in gdf.columns if c.startswith("BMAP_")]
+    if not bmap_cols:
+        return False
+    return bool(gdf[bmap_cols].notna().any().any())
+
+
 def _get_settings(ctx: PipelineContext):
     """
     Erlaubt sowohl ctx.settings.* als auch ctx.*.
@@ -126,7 +157,7 @@ def _extract_year_from_text(text):
 
     # 2) Jahrhundertangaben wie '19. Jh.', '19. Jh', '19. Jahrhundert'
     m_century = re.search(
-        r"(\d{1,2})\s*\.->\s*(->:Jh\.->|Jahrhundert)",
+        r"(\d{1,2})\s*\.\s*(Jh\.?|Jahrhundert)",
         text,
         flags=re.IGNORECASE,
     )
@@ -304,9 +335,8 @@ def _fetch_divis_wms_for_area(
             "FEATURE_COUNT": 1000,
             "feature_count": 1000,
         })
-        url = f"{BASE_URL}->{urlencode(params)}"
         try:
-            resp = session.get(url, timeout=30)
+            resp = session.post(BASE_URL, data=params, timeout=30)
             resp.raise_for_status()
         except requests.RequestException:
             return None
@@ -476,7 +506,7 @@ def _extract_year_from_datierung(text):
     #    RegEx fängt 3- oder 4-stellige Jahrzehntangaben ab
     # ----------------------------------------------
     m_decade = re.search(
-        r"\b(\d{3,4})\s*er(->:\s+Jahre)->\b",
+        r"\b(\d{3,4})\s*er(?:\s+Jahre)?\b",
         text,
         flags=re.IGNORECASE,
     )
@@ -490,7 +520,7 @@ def _extract_year_from_datierung(text):
     # 3) Jahrhundertangaben: '19. Jh.', '19. Jahrhundert'
     # ----------------------------------------------
     m_century = re.search(
-        r"(\d{1,2})\s*\.->\s*(->:Jh\.->|Jahrhundert)",
+        r"(\d{1,2})\s*\.\s*(Jh\.?|Jahrhundert)",
         text,
         flags=re.IGNORECASE,
     )
@@ -646,10 +676,8 @@ def _enrich_with_divis(ctx: PipelineContext, buildings: gpd.GeoDataFrame) -> gpd
             "FEATURE_COUNT": 10,
             "feature_count": 10,
         })
-        url = f"{BASE_URL}->{urlencode(params)}"
-
         try:
-            resp = session.get(url, timeout=20)
+            resp = session.post(BASE_URL, data=params, timeout=20)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -785,13 +813,28 @@ def _load_or_create_zensus_dataset(ctx: PipelineContext) -> gpd.GeoDataFrame:
         zensus_path = zensus_out_dir / "zensus_100m.gpkg"
 
     # Falls die Datei existiert → direkt laden
-    if zensus_path.exists():
-        return gpd.read_file(zensus_path)
-
-    # Falls nicht: ZensusGridSource verwenden
     from kwp_bedarfskennwerte.data_catalog.sources import ZensusGridSource
 
     zensus_source = ZensusGridSource()
+    bbox = None
+    try:
+        bbox = zensus_source._get_bbox_from_context(ctx)
+    except Exception:
+        bbox = None
+
+    if zensus_path.exists():
+        if bbox is not None:
+            try:
+                bbox_geom = shp_box(*bbox)
+                zensus_gdf = gpd.read_file(zensus_path, bbox=bbox_geom)
+                if not zensus_gdf.empty:
+                    return zensus_gdf
+                print("[ZENSUS] Vorhandenes 100m-Grid passt nicht zur BBOX â€“ lade neu.")
+            except Exception as exc:
+                print(f"[ZENSUS] WARN: Konnte vorhandenes Grid nicht prÃ¼fen: {exc}")
+        else:
+            return gpd.read_file(zensus_path)
+
     zensus_gdf = zensus_source.load(ctx)
 
     # Abspeichern im (ggf. neuen) Standardpfad
@@ -1479,13 +1522,19 @@ def _enrich_with_zensus(
     if zensus.crs != buildings.crs:
         zensus = zensus.to_crs(buildings.crs)
 
-    # Räumlicher Join: Gebäude -> Zensuszelle (100m)
+    # Räumlicher Join: Gebäude -> Zensuszelle (100m) über Zentroid
+    # (vermeidet Mehrfachtreffer bei Grenzüberlappungen)
+    b_centroids = buildings.copy()
+    b_centroids["_orig_geometry"] = b_centroids.geometry
+    b_centroids["geometry"] = b_centroids.geometry.centroid
     g_joined = gpd.sjoin(
-        buildings,
+        b_centroids,
         zensus,
         how="left",
-        predicate="intersects",  # ggf. "centroid.within"
+        predicate="within",
     )
+    g_joined["geometry"] = g_joined["_orig_geometry"]
+    g_joined = g_joined.drop(columns=["_orig_geometry"], errors="ignore")
 
     # ------------------------------------------------------------------ #
     # 1) Direkt übernommene Kennzahlen (Skalare pro Zelle)
@@ -1657,6 +1706,11 @@ def _enrich_with_zensus(
     # Ergebnis als GPKG + CSV im ZENSUS-Unterordner ablegen
     # (inkl. aller vorhandenen DIVIS-Spalten)
     # ------------------------------------------------------------------ #
+    # Baujahre als Integer sichern (GPKG-Datentypen)
+    for col in ("DIVIS_Baujahr_Extrakt", "OBAT_Baujahr_Mitte", "Final_Baujahr_Mitte"):
+        if col in g_joined.columns:
+            g_joined[col] = pd.to_numeric(g_joined[col], errors="coerce").astype("Int64")
+
     try:
         g_joined.to_file(gpkg_path, layer="buildings_zensus", driver="GPKG")
         print(f"[ZENSUS] Gebäude+Zensus als GPKG nach {gpkg_path} geschrieben.")
@@ -2294,6 +2348,7 @@ def run_enrichment(
         print("[ap1_enrich] Lade AP1-Gebäudelayer...")
 
     base_buildings = _load_ap1_buildings(ctx)
+    ap1_buildings = base_buildings
 
     # ------------------------------------------------------------------
     # 1b) OBAT als Basis: Cache nur nutzen, wenn Featurecount kompatibel
@@ -2305,6 +2360,15 @@ def run_enrichment(
         verbose=verbose,
         label="GHS-OBAT-Basis",
     )
+
+    if cached_obat is not None:
+        if _has_bmap_data(ap1_buildings) and not _has_bmap_data(cached_obat):
+            if verbose:
+                print(
+                    "[ap1_enrich] WARN: GHS-OBAT-Cache ohne Basemap-Daten – "
+                    "rebuild mit aktuellem AP1."
+                )
+            cached_obat = None
 
     if cached_obat is not None:
         if verbose:
@@ -2369,9 +2433,19 @@ def run_enrichment(
                 label="Zensus-Cache (zensus-first)",
             )
             if cached_zensus is not None:
-                if verbose:
-                    print(f"[ap1_enrich] Zensus bereits vorhanden (Cache): {zensus_gpkg}")
-                zensus_ran_early = True
+                if _zensus_output_looks_valid(
+                    cached_zensus,
+                    expect_divis=not skip_divis,
+                    expect_bmap=_has_bmap_data(buildings_for_zensus_early),
+                ):
+                    if verbose:
+                        print(f"[ap1_enrich] Zensus bereits vorhanden (Cache): {zensus_gpkg}")
+                    zensus_ran_early = True
+                elif verbose:
+                    print(
+                        "[ap1_enrich] Zensus-Cache vorhanden, aber unvollstÃ¤ndig "
+                        "(kein passender Zensus/DIVIS-Inhalt) â€“ lade neu."
+                    )
 
         if not zensus_ran_early:
             if verbose:
@@ -2429,9 +2503,24 @@ def run_enrichment(
     # 4) ZENSUS-100m-Grid laden/erzeugen
     # ------------------------------------------------------------------
     if zensus_ran_early and zensus_gpkg.exists():
-        if verbose:
-            print(f"[ap1_enrich] Zensus bereits im Lauf erstellt – überspringe erneute Berechnung: {zensus_gpkg}")
-    else:
+        try:
+            cached_zensus = gpd.read_file(zensus_gpkg, layer="buildings_zensus")
+            if not _zensus_output_looks_valid(
+                cached_zensus,
+                expect_divis=not skip_divis,
+                expect_bmap=_has_bmap_data(buildings_for_zensus),
+            ):
+                zensus_ran_early = False
+        except Exception as exc:
+            if verbose:
+                print(f"[ap1_enrich] WARN: Konnte Zensus-Cache nicht prüfen: {exc}")
+            zensus_ran_early = False
+
+        if zensus_ran_early and verbose:
+            print(
+                f"[ap1_enrich] Zensus bereits im Lauf erstellt – überspringe erneute Berechnung: {zensus_gpkg}"
+            )
+    if not zensus_ran_early or not zensus_gpkg.exists():
         if verbose:
             print("[ap1_enrich] Lade/erstelle Zensus-100m-Grid...")
         zensus_gdf = _load_or_create_zensus_dataset(ctx)

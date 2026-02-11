@@ -132,6 +132,7 @@ COL_BAUJAHR = "IWU_Baujahresphase"
 COL_CARRIER = "IWU_EnTraeger"
 COL_HEATING = "IWU_Heizungsart"
 COL_ANUTZ = "Final_ANutz"  # Nutzfläche (m²) für Multiplikation
+ENERGY_REF_AREA_FACTOR = 0.8  # EBF = 80% der Bruttogeschossfläche
 
 # Kennwert-Output-Spalten (spezifisch)
 COL_Q_RW_NE = "q_rw_ne_kwh_m2a"
@@ -627,6 +628,7 @@ def _compute_building_demands(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     Berechnet absolute Bedarfe [kWh/a] aus spezifischen Kennwerten [kWh/m²a]
     mittels Final_ANutz [m²].
 
+    FÃ¼r die EnergiebezugsflÃ¤che wird ENERGY_REF_AREA_FACTOR * Final_ANutz angesetzt.
     Schreibt:
     - spec_* (Kopie der q_* Spalten)
     - Q_*_kWh_a (spezifisch * ANutz)
@@ -649,11 +651,12 @@ def _compute_building_demands(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     # absolute Bedarfe
     anutz = pd.to_numeric(gdf[COL_ANUTZ], errors="coerce")
-    gdf[COL_ABS_RW_NE] = pd.to_numeric(gdf.get(COL_Q_RW_NE, np.nan), errors="coerce") * anutz
-    gdf[COL_ABS_TWW_NE] = pd.to_numeric(gdf.get(COL_Q_TWW_NE, np.nan), errors="coerce") * anutz
-    gdf[COL_ABS_RW_END] = pd.to_numeric(gdf.get(COL_Q_RW_END, np.nan), errors="coerce") * anutz
-    gdf[COL_ABS_TWW_END] = pd.to_numeric(gdf.get(COL_Q_TWW_END, np.nan), errors="coerce") * anutz
-    gdf[COL_ABS_END_TOTAL] = pd.to_numeric(gdf.get(COL_Q_END_TOTAL, np.nan), errors="coerce") * anutz
+    anutz_eff = anutz * ENERGY_REF_AREA_FACTOR
+    gdf[COL_ABS_RW_NE] = pd.to_numeric(gdf.get(COL_Q_RW_NE, np.nan), errors="coerce") * anutz_eff
+    gdf[COL_ABS_TWW_NE] = pd.to_numeric(gdf.get(COL_Q_TWW_NE, np.nan), errors="coerce") * anutz_eff
+    gdf[COL_ABS_RW_END] = pd.to_numeric(gdf.get(COL_Q_RW_END, np.nan), errors="coerce") * anutz_eff
+    gdf[COL_ABS_TWW_END] = pd.to_numeric(gdf.get(COL_Q_TWW_END, np.nan), errors="coerce") * anutz_eff
+    gdf[COL_ABS_END_TOTAL] = pd.to_numeric(gdf.get(COL_Q_END_TOTAL, np.nan), errors="coerce") * anutz_eff
 
     # Ausgabe runden (max. 2 Dezimalstellen)
     round_cols = [

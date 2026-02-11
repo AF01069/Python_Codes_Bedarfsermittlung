@@ -944,7 +944,7 @@ class AP1Pipeline:
                 val = None
                 # explizite Höhe
                 if isinstance(h, str):
-                    m = re.search(r"(\d+(->:\.\d+)->)", h)
+                    m = re.search(r"(\d+(?:\.\d+)?)", h)
                     if m:
                         try:
                             val = float(m.group(1))

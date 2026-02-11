@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Iterable, Optional, Tuple
 from shapely.errors import GEOSException
 
 import math
+import warnings
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -626,7 +627,9 @@ class AP1CSVStatistics:
             plt.title(f"Verteilung {col}")
             plt.ylabel("Anzahl Gebäude")
             plt.xticks(rotation=45, ha="right")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{col}_verteilung.png"
             plt.savefig(out_file, dpi=150)
             plt.close()
@@ -642,7 +645,9 @@ class AP1CSVStatistics:
             plt.title(f"Histogramm {col}")
             plt.xlabel(col)
             plt.ylabel("Anzahl Gebäude")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{col}_hist.png"
             plt.savefig(out_file, dpi=150)
             plt.close()
@@ -1123,7 +1128,9 @@ class AP1EnrichCSVStatistics:
             plt.title(f"Histogramm {col}")
             plt.xlabel(col)
             plt.ylabel("Anzahl Gebäude")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{col}_hist.png"
             plt.savefig(out_file, dpi=150)
             plt.close()
@@ -1148,7 +1155,9 @@ class AP1EnrichCSVStatistics:
             plt.title(f"Verteilung {col}")
             plt.ylabel("Anzahl Gebäude")
             plt.xticks(rotation=45, ha="right")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{col}_verteilung.png"
             plt.savefig(out_file, dpi=150)
             plt.close()
@@ -1687,7 +1696,9 @@ class BasicGeometryAnalysisLOD2Shapefile:
             plt.title(f"Verteilung {col}")
             plt.xlabel(col)
             plt.ylabel("Anzahl Gebäude")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{prefix}_{col}_hist.png"
             plt.savefig(out_file, dpi=150)
             plt.close()
@@ -1701,7 +1712,9 @@ class BasicGeometryAnalysisLOD2Shapefile:
             plt.title(f"Verteilung {col}")
             plt.ylabel("Anzahl Gebäude")
             plt.xticks(rotation=45, ha="right")
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Tight layout not applied.*")
+                plt.tight_layout()
             out_file = out_dir / f"{prefix}_{col}_verteilung.png"
             plt.savefig(out_file, dpi=150)
             plt.close()

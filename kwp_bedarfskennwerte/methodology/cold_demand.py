@@ -39,6 +39,8 @@ try:  # optional
 except Exception:  # pragma: no cover
     fiona = None
 
+ENERGY_REF_AREA_FACTOR = 0.8  # EBF = 80% der BruttogeschossflÃ¤che
+
 
 def _norm_text(s: object) -> str:
     s = "" if s is None else str(s)
@@ -124,7 +126,7 @@ def _find_area_col(cols: Sequence[str]) -> Optional[str]:
     for c in favorites:
         if c in cols:
             return c
-    pat = re.compile(r"(final_)->a->nutz|nutz.*fl|area", re.IGNORECASE)
+    pat = re.compile(r"(final_)?anutz|nutz.*fl|area", re.IGNORECASE)
     for c in cols:
         if pat.search(c):
             return c
@@ -265,6 +267,7 @@ def compute_cold_demand_for_ap2(
         merged.loc[need_fb, "SEER_angenommen"] = fb["SEER_angenommen"].values
 
     area = pd.to_numeric(merged[area_col], errors="coerce").fillna(0.0)
+    area_eff = area * ENERGY_REF_AREA_FACTOR
     spec_end = pd.to_numeric(merged["qE_Kuehlung_kWh_m2a"], errors="coerce").fillna(0.0)
     seer = pd.to_numeric(merged["SEER_angenommen"], errors="coerce").fillna(3.0)
     spec_ne = (spec_end * seer).fillna(0.0)
@@ -274,8 +277,8 @@ def compute_cold_demand_for_ap2(
         if c in merged.columns:
             merged = merged.drop(columns=[c])
 
-    Q_end = (area * spec_end).fillna(0.0)
-    Q_ne = (area * spec_ne).fillna(0.0)
+    Q_end = (area_eff * spec_end).fillna(0.0)
+    Q_ne = (area_eff * spec_ne).fillna(0.0)
 
     merged["Q_RCool_NE_kWh_a"] = 0.0
     merged["Q_RCool_END_kWh_a"] = 0.0
@@ -305,6 +308,11 @@ def compute_cold_demand_for_ap2(
     for c in out_cols:
         if c in merged.columns:
             merged[c] = pd.to_numeric(merged[c], errors="coerce").round(2)
+
+    # Jahresfelder als Integer sichern (GPKG-Datentypen)
+    for col in ("DIVIS_year", "Final_Baujahr_Mitte", "forecast_year"):
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").astype("Int64")
 
     out_gpkg_path.parent.mkdir(parents=True, exist_ok=True)
     merged.to_file(out_gpkg_path, layer="buildings", driver="GPKG")

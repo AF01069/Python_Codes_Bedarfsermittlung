@@ -18,17 +18,19 @@ from pathlib import Path
 from typing import Protocol, Dict, Optional, Iterable, Tuple, Any, List
 import os
 import gzip
+import tempfile
 import requests
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import box as shp_box, Polygon, shape as shp_shape
+from shapely.affinity import scale as shp_scale, translate as shp_translate
 from shapely.ops import unary_union
 from pyproj import Transformer, CRS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from ..config.runtime import PipelineContext
 from ..config.paths import DIR_BAUJAHRE_OBAT, rel_zensus2022_dir
-from urllib.parse import urlencode
+from urllib.parse import urlencode, unquote, urlsplit, urlunsplit, parse_qsl
 import logging
 from pathlib import Path
 
@@ -75,11 +77,11 @@ def load_all(ctx: PipelineContext, names: Optional[Iterable[str]] = None) -> Dic
         src: Source = cls()  # type: ignore
         try:
             if not src.available(ctx):
-                print(f"[sources] SKIP: {name} → not available")
+                print(f"[sources] SKIP: {name} -> not available")
                 continue
             gdf = src.load(ctx)
             outputs[name] = gdf
-            print(f"[sources] OK: {name} → {len(gdf)} Features")
+            print(f"[sources] OK: {name} -> {len(gdf)} Features")
         except Exception as exc:
             print(f"[sources] ERROR: {name}: {exc}")
             if getattr(src, "required", True):
@@ -459,7 +461,7 @@ class OSMSource(SourceConfig):
     """
     Datenquelle für OSM.
     """
-    def __init__(self, overpass_url: str = None, timeout: int = 20, use_out_geom: bool = True, *args, **kwargs):
+    def __init__(self, overpass_url: str = None, timeout: int = 60, use_out_geom: bool = True, *args, **kwargs):
         super().__init__(name="osm", required=False)
         # 1) Endpoints: einzeln ODER Komma-Liste ODER Fallback-Defaults
         urls = (overpass_url or "").strip()
@@ -574,12 +576,12 @@ class OSMSource(SourceConfig):
                     ok = True
                     break
                 except requests.exceptions.ReadTimeout:
-                    print(f"[osm]   Endpoint {j} Timeout → nächster Endpoint")
+                    print(f"[osm]   Endpoint {j} Timeout -> nächster Endpoint")
                 except requests.exceptions.RequestException as ex:
-                    print(f"[osm]   Endpoint {j} Fehler: {ex} → nächster Endpoint")
+                    print(f"[osm]   Endpoint {j} Fehler: {ex} -> nächster Endpoint")
             if not ok and mode_geom:
                 # einmaliger Fallback: in klassischem Modus ohne 'geom' erneut versuchen
-                print("[osm] out geom lieferte keine Polygone → Fallback auf klassischen Modus")
+                print("[osm] out geom lieferte keine Polygone -> Fallback auf klassischen Modus")
                 mode_geom = False
                 for j, url in enumerate(self.endpoints, 1):
                     try:
@@ -855,9 +857,9 @@ class BasemapContextSource(SourceConfig):
         print(f"[basemap] Tiles: {len(tiles)} (zoom={self.zoom}, include_pois={self.include_pois})")
 
         # Sammel-Listen
-        b_feats: List[dict] = []     # Gebäude (Gebaeudeflaeche)
-        u_feats: List[dict] = []     # Nutzung + Punkte (Siedlungsflaeche, Weitere_Nutzung_Flaeche, Gebaeudepunkt)
-        # p_feats: List[dict] = []   # weitere POIs (Name_Punkt, Bauwerkspunkt, Adresse …) – aktuell nicht benötigt
+        b_frames: List[gpd.GeoDataFrame] = []     # Gebäude (Gebaeudeflaeche)
+        u_frames: List[gpd.GeoDataFrame] = []     # Nutzung + Punkte (Siedlungsflaeche, Weitere_Nutzung_Flaeche, Gebaeudepunkt)
+        # p_frames: List[gpd.GeoDataFrame] = []   # weitere POIs (Name_Punkt, Bauwerkspunkt, Adresse …) – aktuell nicht benötigt
 
         for i, t in enumerate(tiles, 1):
             if i == 1 or (i % 3 == 0):
@@ -865,37 +867,41 @@ class BasemapContextSource(SourceConfig):
             content = self._fetch_mvt(self.cfg.mvt_url_template, t, headers=self.cfg.headers)
             if not content:
                 continue
-            layers = self._decode_mvt(content)
+            with tempfile.NamedTemporaryFile(suffix=".pbf", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            try:
+                # Gebäude-Polygone
+                b_gdf_tile = self._read_mvt_layer(tmp_path, "Gebaeudeflaeche", t)
+                if not b_gdf_tile.empty:
+                    b_frames.append(b_gdf_tile)
 
-            # Gebäude-Polygone
-            if "Gebaeudeflaeche" in layers:
-                b_feats.extend(self._mvt_features_to_geo(layers["Gebaeudeflaeche"], 3857, t, layer_name="Gebaeudeflaeche"))
+                # Nutzungspolygone
+                for lname in ("Siedlungsflaeche", "Weitere_Nutzung_Flaeche"):
+                    u_gdf_tile = self._read_mvt_layer(tmp_path, lname, t)
+                    if not u_gdf_tile.empty:
+                        u_frames.append(u_gdf_tile)
 
-            # Nutzungspolygone
-            if "Siedlungsflaeche" in layers:
-                feats = self._mvt_features_to_geo(layers["Siedlungsflaeche"], 3857, t, layer_name="Siedlungsflaeche")
-                u_feats.extend(feats)
-            if "Weitere_Nutzung_Flaeche" in layers:
-                feats = self._mvt_features_to_geo(layers["Weitere_Nutzung_Flaeche"], 3857, t, layer_name="Weitere_Nutzung_Flaeche")
-                u_feats.extend(feats)
+                # Gebäudepunkte (wichtige Klasse, insb. Baudenkmal, etc.) – IMMER aufnehmen
+                u_gdf_tile = self._read_mvt_layer(tmp_path, "Gebaeudepunkt", t)
+                if not u_gdf_tile.empty:
+                    u_frames.append(u_gdf_tile)
 
-            # Gebäudepunkte (wichtige Klasse, insb. Baudenkmal, etc.) – IMMER aufnehmen
-            if "Gebaeudepunkt" in layers:
-                feats = self._mvt_features_to_geo(layers["Gebaeudepunkt"], 3857, t, layer_name="Gebaeudepunkt")
-                u_feats.extend(feats)
-
-            # Optional: weitere POIs (z.B. Adresse, Name_Punkt …) – bei Bedarf aktivierbar
-            if self.include_pois:
-                for lname in ("Name_Punkt", "Bauwerkspunkt", "Besonderer_Punkt", "Adresse"):
-                    if lname in layers:
-                        # Wir hängen sie ebenfalls an u_feats an, so dass sie in der zweiten
-                        # GeoDataFrame sichtbar sind (inkl. bm_layer)
-                        feats = self._mvt_features_to_geo(layers[lname], 3857, t, layer_name=lname)
-                        u_feats.extend(feats)
+                # Optional: weitere POIs (z.B. Adresse, Name_Punkt …) – bei Bedarf aktivierbar
+                if self.include_pois:
+                    for lname in ("Name_Punkt", "Bauwerkspunkt", "Besonderer_Punkt", "Adresse"):
+                        u_gdf_tile = self._read_mvt_layer(tmp_path, lname, t)
+                        if not u_gdf_tile.empty:
+                            u_frames.append(u_gdf_tile)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
         # in Ziel-CRS
-        b_gdf = self._to_target_crs(b_feats, src_epsg=3857, dst_epsg=int(CRS.from_user_input(to_crs).to_epsg()))
-        u_gdf = self._to_target_crs(u_feats, src_epsg=3857, dst_epsg=int(CRS.from_user_input(to_crs).to_epsg()))
+        b_gdf = self._concat_mvt_frames(b_frames, target_epsg=int(CRS.from_user_input(to_crs).to_epsg()))
+        u_gdf = self._concat_mvt_frames(u_frames, target_epsg=int(CRS.from_user_input(to_crs).to_epsg()))
 
         # Gebäude filtern & Fläche
         if not b_gdf.empty:
@@ -992,6 +998,49 @@ class BasemapContextSource(SourceConfig):
                 continue
             feats.append({"geometry": shp, **props})
         return feats
+
+    def _read_mvt_layer(self, path: str, layer_name: str, tile) -> gpd.GeoDataFrame:
+        """Read a single MVT layer via GDAL and transform tile coords to EPSG:3857."""
+        try:
+            gdf = gpd.read_file(path, layer=layer_name)
+        except Exception:
+            return gpd.GeoDataFrame(geometry=[], crs="EPSG:3857")
+        if gdf.empty:
+            return gpd.GeoDataFrame(geometry=[], crs="EPSG:3857")
+        gdf = self._transform_mvt_tile_geometry(gdf, tile)
+        if layer_name:
+            gdf["bm_layer"] = layer_name
+        return gdf
+
+    @staticmethod
+    def _transform_mvt_tile_geometry(gdf: gpd.GeoDataFrame, tile) -> gpd.GeoDataFrame:
+        from mercantile import xy_bounds
+        x, y, z = tile[0], tile[1], tile[2]
+        bounds = xy_bounds(x, y, z)
+        extent = 4096.0
+        sx = (bounds.right - bounds.left) / extent
+        sy = (bounds.top - bounds.bottom) / extent
+
+        def _tx(geom):
+            if geom is None or geom.is_empty:
+                return geom
+            geom = shp_scale(geom, xfact=sx, yfact=sy, origin=(0, 0))
+            return shp_translate(geom, xoff=bounds.left, yoff=bounds.bottom)
+
+        out = gdf.copy()
+        out["geometry"] = out.geometry.apply(_tx)
+        out.set_crs("EPSG:3857", inplace=True, allow_override=True)
+        return out
+
+    @staticmethod
+    def _concat_mvt_frames(frames: List[gpd.GeoDataFrame], target_epsg: int) -> gpd.GeoDataFrame:
+        if not frames:
+            return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{target_epsg}")
+        merged = gpd.GeoDataFrame(
+            pd.concat(frames, ignore_index=True),
+            crs="EPSG:3857",
+        )
+        return merged.to_crs(epsg=target_epsg)
 
     @staticmethod
     def _mvt_geom_to_shapely(geom, extent: int, tile):
@@ -1130,10 +1179,8 @@ class DivisWmsSource(SourceConfig):
             "FEATURE_COUNT": 1000,
             "feature_count": 1000,
         })
-        url = f"{self.BASE_URL}->{urlencode(params)}"
-
         try:
-            resp = self.session.get(url, timeout=30)
+            resp = self.session.post(self.BASE_URL, data=params, timeout=30)
             resp.raise_for_status()
         except requests.RequestException as exc:
             print(f"[divis] GetFeatureInfo-Fehler ({i},{j}): {exc}")
@@ -1199,7 +1246,7 @@ class DivisWmsSource(SourceConfig):
             before = len(gdf)
             gdf = gdf.drop_duplicates(subset=[id_col])
             after = len(gdf)
-            print(f"[divis] Drop duplicates nach {id_col}: {before} → {after}")
+            print(f"[divis] Drop duplicates nach {id_col}: {before} -> {after}")
 
         # In Ziel-CRS transformieren
         target_epsg = int(getattr(ctx.settings, "target_epsg", 25833))
@@ -1276,7 +1323,11 @@ class ZensusGridSource(SourceConfig):
         **kwargs,
     ):
         super().__init__(name="zensus_100m", required=False)
-        self.feature_url = feature_url or self._DEFAULT_FEATURE_URL
+        raw_url = feature_url or self._DEFAULT_FEATURE_URL
+        decoded_url = unquote(raw_url)
+        parsed = urlsplit(decoded_url)
+        self.feature_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        self.feature_url_params = dict(parse_qsl(parsed.query))
         # CRS der Gebäude-/Projektgeometrien (LoD2, Basemap, OSM etc.)
         self.crs_buildings = crs_buildings
 
@@ -1356,6 +1407,13 @@ class ZensusGridSource(SourceConfig):
         offset = 0
         all_features = []
 
+        base_url = self.feature_url
+        extra_params = dict(self.feature_url_params)
+        if "?" in base_url or "%3F" in base_url:
+            parsed = urlsplit(unquote(base_url))
+            base_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+            extra_params.update(dict(parse_qsl(parsed.query)))
+
         base_params = {
             "where": "1=1",
             "outFields": "*",
@@ -1369,10 +1427,11 @@ class ZensusGridSource(SourceConfig):
         }
 
         while True:
-            params = dict(base_params)
+            params = dict(extra_params)
+            params.update(base_params)
             params["resultOffset"] = offset
 
-            resp = requests.get(self.feature_url, params=params, timeout=60)
+            resp = requests.post(base_url, data=params, timeout=60)
             resp.raise_for_status()
             data = resp.json()
 

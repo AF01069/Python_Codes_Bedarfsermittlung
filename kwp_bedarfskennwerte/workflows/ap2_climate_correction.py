@@ -52,12 +52,12 @@ PLZ_CANDIDATES: Tuple[str, ...] = (
 )
 
 _INCLUDE_PATTERNS = (
-    r"(^|_)RH(_|$)",
+    r"(?:^|_)RH(?:_|$)",
     r"raumw",
     r"raumwaerme",
     r"heiz",
-    r"space.->heat",
-    r"(^|_)QH(_|$)",
+    r"space.*heat",
+    r"(?:^|_)QH(?:_|$)",
 )
 
 _EXCLUDE_PATTERNS = (
