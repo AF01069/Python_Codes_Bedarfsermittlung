@@ -63,7 +63,9 @@ Outputs werden standardmäßig unter `out/` geschrieben:
 
 ## Lizenz
 
-Noch festzulegen. Bitte `LICENSE` ergänzen.
+Dieses Projekt steht unter der GNU General Public License Version 3 (GPL-3.0). Sie dürfen die Software verwenden, kopieren, verändern und weiterverbreiten, sofern alle Weitergaben ebenfalls unter den Bedingungen der GPL-3.0 erfolgen.
+
+Die vollständigen Lizenzbedingungen finden Sie in der Datei `LICENSE` im Repository.
 
 ## Datennutzung
 
