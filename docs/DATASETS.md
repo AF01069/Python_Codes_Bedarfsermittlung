@@ -38,16 +38,12 @@ It includes code usage references and known license/terms. Unknown items are mar
  If this dataset originates from GeoSN 
   - Source:
     - Landesamt für Geobasisinformation Sachsen (GeoSN)
-
   - Dataset:
      - Digitales 3D-Stadtmodell, Freistaat Sachsen
-
   - License:
      - Datenlizenz Deutschland – Namensnennung – Version 2.0 (dl-by-de/2.0)
-
   - Required attribution:
      - Quelle: GeoSN
-
   - License URL:
    https://www.govdata.de/dl-de/by-2-0
 
