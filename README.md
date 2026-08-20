@@ -69,5 +69,10 @@ Die vollständigen Lizenzbedingungen finden Sie in der Datei `LICENSE` im Reposi
 
 ## Datennutzung
 
+Dieses Projekt steht unter der GNU General Public License v3.0 (GPL-3.0).
+
+Die verwendeten Eingangsdatensätze unterliegen jedoch ihren jeweiligen eigenständigen Lizenz- und Nutzungsbedingungen. Die GPL-3.0 gilt nur für
+den Quellcode dieses Projekts und nicht automatisch für enthaltene oder verarbeitete Datensätze.
+
 Siehe `docs/DATASETS.md` für Datenquellen, Verwendungszwecke und Lizenzen.
 
