@@ -33,9 +33,25 @@ It includes code usage references and known license/terms. Unknown items are mar
 - Purpose:
   - Base building geometry, used in AP1/AP2 pipelines.
 - License/terms:
-  - TODO (depends on the source of the LoD2 data).
-  - If this dataset originates from BKG "LoD2-DE", usage is restricted to eligible users
-    under V GeoBund / V GeoLaender and requires a source attribution.
+  - (depends on the source of the LoD2 data).
+
+ If this dataset originates from GeoSN 
+  - Source:
+    - Landesamt für Geobasisinformation Sachsen (GeoSN)
+
+  - Dataset:
+     - Digitales 3D-Stadtmodell, Freistaat Sachsen
+
+  - License:
+     - Datenlizenz Deutschland – Namensnennung – Version 2.0 (dl-by-de/2.0)
+
+  - Required attribution:
+     - Quelle: GeoSN
+
+  - License URL:
+   https://www.govdata.de/dl-de/by-2-0
+
+ If this dataset originates from BKG "LoD2-DE", usage is restricted to eligible users under V GeoBund / V GeoLaender and requires a source attribution.
 - License/terms links (if LoD2-DE):
   - https://gdz.bkg.bund.de/index.php/default/3d-gebaudemodelle-lod2-deutschland-lod2-de.html
 
